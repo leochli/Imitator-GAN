@@ -1,1 +1,82 @@
 #This is a script for data processing
+import tensorflow as tf
+import numpy as np
+import cv2
+from yolo_model import YOLO
+
+import os
+import sys
+
+YOLO_CLASSIFICATION_CLASSES_FILE = "./yolo_data/coco_classes.txt"
+YOLO_MODEL = "./yolo_data/yolo.h5"
+
+device_cf = tf.ConfigProto(device_count={'GPU': 1},
+                           inter_op_parallelism_threads = 2,
+                           intra_op_parallelism_threads = 2,
+                           log_device_placement = False)
+device_cf.gpu_options.per_process_gpu_memory_fraction = 0.8
+device_cf.gpu_options.allow_growth = True
+
+def get_yolo_model(path_to_model, obj_threshold=0.6, nms_threshold=0.5):
+    return YOLO(path_to_model, obj_threshold, nms_threshold)
+
+def process_image(img):
+    image = cv2.resize(img, (416, 416), interpolation=cv2.INTER_CUBIC)
+    image = np.array(image, dtype='float32')
+    image /= 255.
+    image = np.expand_dims(image, axis=0)
+    return image
+
+def crop(img, box):
+    # box: coordinate of box
+    x, y, w, h = box
+    top = max(0, np.floor(x + 0.5).astype(int))
+    left = max(0, np.floor(y + 0.5).astype(int))
+    right = min(img.shape[1], np.floor(x + w + 0.5).astype(int))
+    bottom = min(img.shape[0], np.floor(y + h + 0.5).astype(int))
+    sub_region = img[left:bottom, top:right, :]
+    return sub_region
+
+def detect_with_yolo(image, yolo, name):
+    '''
+    :param image: image
+    :param yolo: YOLOv3 model
+    :param name: name of the image
+    :return: croped person
+    '''
+    pimage = process_image(image) # resize, normalize
+    boxes, classes, scores = yolo.predict(pimage, image.shape)
+    # if boxes is None or 0 not in classes:
+    # yolo detect nothing or does not detect human
+    if boxes is None or 0 not in classes:
+        print('No detected item on image {}'.formate(name))
+        return image
+    for box, cls, score in zip(boxes, classes, scores):
+        if cls != 0: # yolo does not detect human
+            continue
+        img_person = crop(image, box)
+        return img_person
+
+def detect_with_folder(dataset_dir, output_dir):
+    yolo = get_yolo_model(YOLO_MODEL)
+    print("Yolo and gesture_model models are loading...")
+    print("Processing target directory: ", dataset_dir)
+    for subdir, dirs, files in os.walk(dataset_dir):
+    	for file in files:
+    		if(file.endswith('.jpg') or file.endswith('.jpeg')):
+    			img_path = os.path.join(subdir, file)
+    			image = cv2.imread(img_path,cv2.IMREAD_COLOR)
+    			img_person = detect_with_yolo(image, yolo, file)
+    			print("Detect person in image {}!".format(file))
+    			cv2.imwrite(output_dir + 'cropped_' + file, img_person)
+
+if __name__ == '__main__':
+	dataset_dir = "./"
+	output_dir = './'
+	if(len(sys.argv)>1):
+		dataset_dir = sys.argv[1:]
+		output_dir = sys.argv[2:]
+
+	
+	detect_with_folder(dataset_dir, output_dir)
+
