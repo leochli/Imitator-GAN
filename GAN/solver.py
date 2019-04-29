@@ -9,6 +9,8 @@ import os
 import time
 import datetime
 
+from utils import *
+
 
 class Solver(object):
     """Solver for training and testing StarGAN."""
@@ -83,6 +85,10 @@ class Solver(object):
         self.G.to(self.device)
         self.D.to(self.device)
 
+        """Build the feature extractor"""
+        self.feature_model = f_model(model_path=DUMPED_MODEL).cuda()
+
+
     def print_network(self, model, name):
         """Print out the network information."""
         num_params = 0
@@ -135,15 +141,23 @@ class Solver(object):
         dydx = dydx.view(dydx.size(0), -1)
         dydx_l2norm = torch.sqrt(torch.sum(dydx ** 2, dim=1))
         return torch.mean((dydx_l2norm - 1) ** 2)
-
-
-
-    def feat_extract(self, img):
         pass
 
+    def feat_extract(self, resized_data):
+        # input: N * 3 * 224 * 224
+        resized_data = resized_data.cuda()
+        # output: N * num_classes, N * inter_dim, N * C' * 7 * 7
+        out, inter_out, x = self.feature_model(resized_data)
+        return out
 
-    def pose_extract(self, img):
-        pass
+    def pose_extract(self, batch_img):
+        # input [N, 3, 224, 224] in RGB
+        # output [N, 2, 18]
+        permute = [2, 1, 0]
+        # RGB TO BGR
+        batch_img = batch_img[:, permute, : , :]
+        pose_vectors = get_body_vector(batch_img.numpy())
+        return pose_vectors
 
     def appreance_loss(self, feat_fake, feat_real):
         pass
