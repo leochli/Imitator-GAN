@@ -51,7 +51,7 @@ def detect_with_yolo(image, yolo, name, option=None):
     # if boxes is None or 0 not in classes:
     # yolo detect nothing or does not detect human
     if boxes is None or 0 not in classes:
-        print('No detected item on image {}'.formate(name))
+        print('No detected item on image {}'.format(name))
         if option=='BBOX':
         	bbox = [0, 0, 416, 416]
         	return bbox, image
@@ -117,7 +117,7 @@ def process_human_pose(dataset_dir, output_dir):
 
     			image_anno['image_path'] = img_path
     			image_anno['bbox'] = bbox
-    			image_anno['pose_vector'] = pose_vector
+    			image_anno['pose_vector'] = pose_vector.tolist()
     			image_annos.append(image_anno)
 
     data['annotations'] = image_annos
@@ -127,14 +127,18 @@ def process_human_pose(dataset_dir, output_dir):
     	json.dump(data, outfile)
 
 if __name__ == '__main__':
-	deep_fashion_dir = "./"
-	deep_fashion_anno_dir = "./"
-	human_pose_dir = './'
-	human_pose_anno_dir = './'
-	if(len(sys.argv)>1):
-		dataset_dir = sys.argv[1:]
-		output_dir = sys.argv[2:]
+    deep_fashion_dir = "/home/lichenghui/deepfashion/img"
+    deep_fashion_anno_dir = "/home/lichenghui/processed_deep_fashion/"
+    human_pose_dir = '/home/lichenghui/mpii_human_pose/images'
+    human_pose_anno_dir = '/home/lichenghui/mpii_human_pose/annotation'
 
-	process_deep_fashion(deep_fashion_dir, deep_fashion_anno_dir)
-	process_human_pose(human_pose_dir, human_pose_anno_dir)
+
+    if(len(sys.argv)>1):
+        human_pose_dir = sys.argv[1:]
+        human_pose_anno_dir = sys.argv[2:]
+
+    test_dir = '/home/lichenghui/test_mpii/images'
+    test_anno = '/home/lichenghui/test_mpii/annotation/'
+    process_deep_fashion(deep_fashion_dir, deep_fashion_anno_dir)
+    # process_human_pose(test_dir, test_anno)
 
