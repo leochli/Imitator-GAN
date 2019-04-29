@@ -32,18 +32,23 @@ def cart2pol(x, y):
     return(rho, phi)
 
 def encode_body_vector(human, width, height):
-    body_vector = np.zeros(shape=(2, len(human.body_parts)))
-    body_vector = []
-    print("Human body body_parts")
-    print(human.body_parts.keys())
-    print("width, height", width, height)
+    body_vector = np.zeros(shape=(2, 18))
+    mask = np.zeros(shape=(18))
+    # print("Human body body_parts")
+    # print(human.body_parts.keys())
+    # print("width, height", width, height)
     for i in range(18):
         if i not in human.body_parts.keys():
-            body_vector.append([0,0])
+            # body_vector.append([0,0])
+            body_vector[0, i] = 0
+            body_vector[1, i] = 0
+            mask[i] = 0
             continue
         body_part = human.body_parts[i]
-        print("key: {}, value: x-{}, y-{}".format(i, body_part.x, body_part.y))
-        body_vector.append([int(body_part.x * width + 0.5), int(body_part.y * height + 0.5)])
+        # print("key: {}, value: x-{}, y-{}".format(i, body_part.x, body_part.y))
+        body_vector[0, i] = int(body_part.x * width + 0.5)
+        body_vector[1, i] = int(body_part.y * height + 0.5)
+        mask[i] = 1
 
     # for i in range(18):
     #     # convert to relative coordinate, centered at neck i=1
@@ -53,9 +58,9 @@ def encode_body_vector(human, width, height):
     #         # rho, phi = cart2pol(x,y)
     #         body_vector[i] = [x, y]
 
-    body_vector = np.asarray(body_vector)
+    # body_vector = np.asarray(body_vector)
     # print(body_vector.shape)
-    return body_vector
+    return mask, body_vector
 
 def get_heatMap(img_dir):
     resize = '0x0'
@@ -85,15 +90,16 @@ def get_body_vector(image):
     resize_out_ratio = 8.0
     humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=resize_out_ratio)
 
+    mask = np.zeros(shape=(18,))
     if(len(humans)>0):
         # print("Pose estimator: {} humans".format(len(humans)))
-        body_vector = encode_body_vector(humans[0],w, h)
+        mask, body_vector = encode_body_vector(humans[0],w, h)
     else:
         print("NO HUMAN IN POSE ESTIMATION")
         body_vector = np.zeros(shape=(2, 18))
     # shape = (2, 18)
     # print(body_vector.shape)
-    return body_vector
+    return mask, body_vector
 
 
 def get_batch_body_vector(batch_image):
@@ -103,14 +109,14 @@ def get_batch_body_vector(batch_image):
     # image = common.read_imgfile(img_path, None, None)
 
     body_vectors = np.zeros(shape=(batch_image.shape[0], 2, 18))
-
+    masks = np.zeros(shape=(batch_image.shape[0], 18))
     for i in range(batch_image.shape[0]):
         image = batch_image[i]
         resize_out_ratio = 8.0
         humans = e.inference(image, resize_to_default=(w > 0 and h > 0), upsample_size=resize_out_ratio)
 
         if(len(humans)>0):
-            body_vectors[i] = encode_body_vector(humans[0],w, h)
+            mask[i], body_vectors[i] = encode_body_vector(humans[0],w, h)
         else:
             body_vectors[i] = np.zeros(shape=(2, len(human.body_parts)))
         # shape = (2, 18)
