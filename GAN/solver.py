@@ -8,9 +8,9 @@ import numpy as np
 import os
 import time
 import datetime
-
+from feature_net import f_model
 from utils import *
-
+import config
 
 class Solver(object):
     """Solver for training and testing StarGAN."""
@@ -35,7 +35,7 @@ class Solver(object):
         self.lambda_gp = config.lambda_gp
 
         # Training configurations.
-        self.dataset = config.dataset
+        # self.dataset = config.dataset
         self.batch_size = config.batch_size
         self.num_iters = config.num_iters
         self.num_iters_decay = config.num_iters_decay
@@ -45,7 +45,11 @@ class Solver(object):
         self.beta1 = config.beta1
         self.beta2 = config.beta2
         self.resume_iters = config.resume_iters
-        self.selected_attrs = config.selected_attrs
+        # self.selected_attrs = config.selected_attrs
+
+        # loss functions
+        self.feature_loss = torch.nn.CosineEmbeddingLoss()
+        self.pose_loss = torch.nn.PairwiseDistance()
 
         # Test configurations.
         self.test_iters = config.test_iters
@@ -86,7 +90,7 @@ class Solver(object):
         self.D.to(self.device)
 
         """Build the feature extractor"""
-        self.feature_model = f_model(model_path=DUMPED_MODEL).cuda()
+        self.feature_model = f_model(model_path=DUMPED_MODEL).to(self.device)#.cuda()
 
 
     def print_network(self, model, name):
@@ -145,25 +149,35 @@ class Solver(object):
 
     def feat_extract(self, resized_data):
         # input: N * 3 * 224 * 224
-        resized_data = resized_data.cuda()
+        resized_data = resized_data.to(self.device)#.cuda()
         # output: N * num_classes, N * inter_dim, N * C' * 7 * 7
         out, inter_out, x = self.feature_model(resized_data)
+        # return batch feature vector
         return out
 
-    def pose_extract(self, batch_img):
+    def pose_extract(self, batch_img, bbx):
         # input [N, 3, 224, 224] in RGB
         # output [N, 2, 18]
         permute = [2, 1, 0]
-        # RGB TO BGR
-        batch_img = batch_img[:, permute, : , :]
-        pose_vectors = get_body_vector(batch_img.numpy())
+        crop_batch = batch_img.new().zero_()
+        for i in range(batch_img.shape[0]):
+            img = crop(batch_img[i], bbx[i])
+            # RGB TO BGR
+            img = img[:, permute, : , :]
+            crop_batch[i, :, :] = img
+        pose_vectors = get_batch_body_vector(crop_batch.numpy())
         return pose_vectors
 
-    def appreance_loss(self, feat_fake, feat_real):
-        pass
+    def appreance_cos_similarity(self, feat_fake, feat_real):
+        label = torch.ones(feat_real.shape[0])
+        cos_simi = self.feature_loss(feat_real, feat_fake, label)
+        return cos_simi
 
-    def pose_loss(self, pose_fake, pose_real):
-        pass
+    def pose_loss(self, pose_fake, pose_real, mask):
+        pose_fake = pose_fake * mask
+        pose_real = pose_real * mask
+        distance = self.pose_loss(pose_real, pose_fake)
+        return distance
 
 
 
@@ -173,7 +187,7 @@ class Solver(object):
 
         # Fetch fixed inputs for debugging.
         data_iter = iter(self.data_loader)
-        a_fixed, b_fixed = next(data_iter)
+        a_fixed, b_fixed, bbox_fixed, b_fixed_pose_feat, mask_fixed = next(data_iter)
         a_fixed = a_fixed.to(self.device)
         b_fixed = b_fixed.to(self.device)
         # c_fixed_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
@@ -199,10 +213,10 @@ class Solver(object):
 
             # Fetch real images and labels.
             try:
-                a_real, b_real = next(data_iter)
+                a_real, b_real, bbox, b_pose_feat, mask = next(data_iter)
             except:
                 data_iter = iter(self.data_loader)
-                a_real, b_real = next(data_iter)
+                a_real, b_real, bbox, b_pose_feat, mask = next(data_iter)
 
 
             a_real = a_real.to(self.device)  # Input images.
@@ -211,8 +225,8 @@ class Solver(object):
             # extract appearance feature
             a_app_feat = self.feat_extract(a_real)
 
-            # extract pose feature
-            b_pose_feat = self.pose_extract(b_real)
+            # # extract pose feature
+            # b_pose_feat = self.pose_extract(b_real)
 
             # =================================================================================== #
             #                             2. Train the discriminator                              #
@@ -224,24 +238,26 @@ class Solver(object):
             # d_loss_cls = self.classification_loss(out_cls, label_org, self.dataset)
 
             # Compute loss with fake images.
-            x_fake = self.G(b_real, a_app_feat)
+            con_feat = torch.cat([a_app_feat, bbox], dim=1)
+            x_fake = self.G(b_real, con_feat)
             out_src = self.D(x_fake.detach())
             d_loss_fake = torch.mean(out_src)
-            fake_app_feat = self.feat_extract(x_fake)
-            fake_pose_feat = self.pose_extract(b_pose_feat)
-            d_loss_app = self.appreance_loss(fake_app_feat, a_app_feat)
-            d_loss_pose = self.pose_loss(fake_pose_feat, b_pose_feat)
+            # fake_app_feat = self.feat_extract(x_fake)
+            # fake_pose_feat = self.pose_extract(x_fake, bbox)
+            # d_loss_app = self.appreance_cos_similarity(fake_app_feat, a_app_feat)
+            # d_loss_pose = - self.pose_loss(fake_pose_feat, b_pose_feat)
 
 
             # Compute loss for gradient penalty.
-            # alpha = torch.rand(x_real.size(0), 1, 1, 1).to(self.device)
-            # x_hat = (alpha * x_real.data + (1 - alpha) * x_fake.data).requires_grad_(True)
-            # out_src, _ = self.D(x_hat)
-            # d_loss_gp = self.gradient_penalty(out_src, x_hat)
+            alpha = torch.rand(b_real.size(0), 1, 1, 1).to(self.device)
+            x_hat = (alpha * b_real.data + (1 - alpha) * x_fake.data).requires_grad_(True)
+            out_src = self.D(x_hat)
+            d_loss_gp = self.gradient_penalty(out_src, x_hat)
 
             # Backward and optimize.
             # d_loss = d_loss_real + d_loss_fake + self.lambda_app * d_loss_cls + self.lambda_gp * d_loss_gp
-            d_loss = d_loss_fake + d_loss_real + self.lambda_app * d_loss_app + self.lambda_pose * d_loss_pose
+            # d_loss = d_loss_fake + d_loss_real + self.lambda_app * d_loss_app + self.lambda_pose * d_loss_pose
+            d_loss = d_loss_fake + d_loss_real + self.lambda_gp * d_loss_gp
             self.reset_grad()
             d_loss.backward()
             self.d_optimizer.step()
@@ -250,8 +266,8 @@ class Solver(object):
             loss = {}
             loss['D/loss_real'] = d_loss_real.item()
             loss['D/loss_fake'] = d_loss_fake.item()
-            loss['D/loss_app'] = d_loss_app.item()
-            loss['D/loss_pose'] = d_loss_pose.item()
+            # loss['D/loss_app'] = d_loss_app.item()
+            # loss['D/loss_pose'] = d_loss_pose.item()
             # loss['D/loss_gp'] = d_loss_gp.item()
 
             # =================================================================================== #
@@ -260,14 +276,14 @@ class Solver(object):
 
             if (i + 1) % self.n_critic == 0:
                 # Original-to-target domain.
-                x_fake = self.G(b_real, a_app_feat)
+                x_fake = self.G(b_real, con_feat)
                 out_src = self.D(x_fake)
                 g_loss_fake = - torch.mean(out_src)
                 fake_app_feat = self.feat_extract(x_fake)
-                fake_pose_feat = self.pose_extract(b_pose_feat)
+                fake_pose_feat = self.pose_extract(x_fake, bbox)
                 # g_loss_cls = self.classification_loss(out_cls, label_trg, self.dataset)
-                g_loss_app = self.appreance_loss(fake_app_feat, a_app_feat)
-                g_loss_pose = self.pose_loss(fake_pose_feat, b_pose_feat)
+                g_loss_app = - self.appreance_cos_similarity(fake_app_feat, a_app_feat)  # -similarity
+                g_loss_pose = self.pose_loss(fake_pose_feat, b_pose_feat, mask)                # joints distance
 
 
                 # Backward and optimize.
@@ -354,3 +370,12 @@ class Solver(object):
                 result_path = os.path.join(self.result_dir, '{}-images.jpg'.format(i + 1))
                 save_image(self.denorm(x_concat.data.cpu()), result_path, nrow=1, padding=0)
                 print('Saved real and fake images into {}...'.format(result_path))
+
+
+if __name__ == "__main__":
+    pose_data_root = config.pose_data_root
+    fashion_data_root = config.deepfashion_data_root
+    train_loader = get_dataloader(pose_data_root, fashion_data_root, config.batch_size)
+    data_iter = iter(train_loader)
+    solve = Solver(train_loader, config)
+    solve.train()

@@ -5,12 +5,13 @@ import torch
 from tf_pose import common
 from tf_pose.estimator import TfPoseEstimator
 from tf_pose.networks import get_graph_path, model_wh
-
+from dataloader import *
 # All the constants
+import config
 
-DUMPED_MODEL = "model_10_final.pth.tar"
-INTER_DIM = 512
-CATEGORIES = 20
+DUMPED_MODEL = config.dumped_model #"model_10_final.pth.tar"
+INTER_DIM = config.inter_dim #512
+CATEGORIES = config.categories #20
 
 
 device_cf = tf.ConfigProto(device_count={'GPU': 1},
@@ -24,7 +25,7 @@ e = TfPoseEstimator(get_graph_path('cmu'), tf_config=device_cf)
 def load_model(path=None):
     if not path:
         return None
-    return torch.load(path)
+    return torch.load(path) #, map_location='cpu'
 
 def cart2pol(x, y):
     rho = np.sqrt(x**2 + y**2)
