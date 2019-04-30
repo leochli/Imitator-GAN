@@ -10,6 +10,8 @@ import time
 import datetime
 from feature_net import f_model
 from utils import *
+from dataloader import *
+from data_process import *
 import config
 
 class Solver(object):
@@ -90,7 +92,8 @@ class Solver(object):
         self.D.to(self.device)
 
         """Build the feature extractor"""
-        self.feature_model = f_model(model_path=DUMPED_MODEL).to(self.device)#.cuda()
+        self.feature_model = f_model(model_path=DUMPED_MODEL, freeze_param=True).cuda()#.cuda()
+        self.feature_model.eval()
 
 
     def print_network(self, model, name):
@@ -127,6 +130,10 @@ class Solver(object):
         self.g_optimizer.zero_grad()
         self.d_optimizer.zero_grad()
 
+
+    def normalize(self, x):
+        pass
+
     def denorm(self, x):
         """Convert the range from [-1, 1] to [0, 1]."""
         out = (x + 1) / 2
@@ -153,31 +160,37 @@ class Solver(object):
         # output: N * num_classes, N * inter_dim, N * C' * 7 * 7
         out, inter_out, x = self.feature_model(resized_data)
         # return batch feature vector
-        return out
+        return out.clamp_(0, 1)
 
-    def pose_extract(self, batch_img, bbx):
-        # input [N, 3, 224, 224] in RGB
+    def pose_extract(self, batch_img, bbx=None):
+        # input [N, 224, 224, 3] in RGB
         # output [N, 2, 18]
-        permute = [2, 1, 0]
-        crop_batch = batch_img.new().zero_()
-        for i in range(batch_img.shape[0]):
-            img = crop(batch_img[i], bbx[i])
-            # RGB TO BGR
-            img = img[:, permute, : , :]
-            crop_batch[i, :, :] = img
-        pose_vectors = get_batch_body_vector(crop_batch.numpy())
+        # permute = [2, 1, 0]
+        # # crop_batch = np.zeros(shape=())
+        # for i in range(batch_img.shape[0]):
+        #     img = crop(batch_img[i], bbx[i])
+        #     # RGB TO BGR
+        #     img = img[:, permute, : , :]
+        #     crop_batch[i, :, :] = img
+        # pose_vectors = get_batch_body_vector(crop_batch.numpy())
+
+        batch_img = np.transpose(batch_img, (0, 2, 3, 1))
+        # print(batch_img.shape)
+        pose_vectors = get_batch_body_vector(batch_img)
+        pose_vectors = torch.from_numpy(pose_vectors)
         return pose_vectors
 
     def appreance_cos_similarity(self, feat_fake, feat_real):
-        label = torch.ones(feat_real.shape[0])
+        label = torch.ones(feat_real.shape[0]).cuda()
         cos_simi = self.feature_loss(feat_real, feat_fake, label)
         return cos_simi
 
-    def pose_loss(self, pose_fake, pose_real, mask):
-        pose_fake = pose_fake * mask
-        pose_real = pose_real * mask
+    def compute_pose_loss(self, pose_fake, pose_real, mask):
+        mask = mask.view(-1, 1, 18).double()
+        pose_fake = torch.mul(pose_fake, mask)
+        pose_real = torch.mul(pose_real.double(), mask)
         distance = self.pose_loss(pose_real, pose_fake)
-        return distance
+        return distance.float().sum()
 
 
 
@@ -190,6 +203,7 @@ class Solver(object):
         a_fixed, b_fixed, bbox_fixed, b_fixed_pose_feat, mask_fixed = next(data_iter)
         a_fixed = a_fixed.to(self.device)
         b_fixed = b_fixed.to(self.device)
+        bbox_fixed = bbox_fixed.to(self.device)
         # c_fixed_list = self.create_labels(c_org, self.c_dim, self.dataset, self.selected_attrs)
 
         # Learning rate cache for decaying.
@@ -205,7 +219,7 @@ class Solver(object):
         # Start training.
         print('Start training...')
         start_time = time.time()
-        for i in range(start_iters, self.num_iters):
+        for step in range(start_iters, self.num_iters):
 
             # =================================================================================== #
             #                             1. Preprocess input data                                #
@@ -221,9 +235,13 @@ class Solver(object):
 
             a_real = a_real.to(self.device)  # Input images.
             b_real = b_real.to(self.device)
+            bbox = bbox.to(self.device)
+            b_pose_feat = b_pose_feat.to(self.device)
+            mask = mask.to(self.device)
 
             # extract appearance feature
             a_app_feat = self.feat_extract(a_real)
+            a_app_feat = a_app_feat.to(self.device)
 
             # # extract pose feature
             # b_pose_feat = self.pose_extract(b_real)
@@ -238,7 +256,9 @@ class Solver(object):
             # d_loss_cls = self.classification_loss(out_cls, label_org, self.dataset)
 
             # Compute loss with fake images.
-            con_feat = torch.cat([a_app_feat, bbox], dim=1)
+            # con_feat = torch.cat([a_app_feat, bbox/416.0], dim=1)
+            con_feat = a_app_feat
+
             x_fake = self.G(b_real, con_feat)
             out_src = self.D(x_fake.detach())
             d_loss_fake = torch.mean(out_src)
@@ -257,6 +277,7 @@ class Solver(object):
             # Backward and optimize.
             # d_loss = d_loss_real + d_loss_fake + self.lambda_app * d_loss_cls + self.lambda_gp * d_loss_gp
             # d_loss = d_loss_fake + d_loss_real + self.lambda_app * d_loss_app + self.lambda_pose * d_loss_pose
+            # d_loss = d_loss_fake + d_loss_real + self.lambda_gp * d_loss_gp
             d_loss = d_loss_fake + d_loss_real + self.lambda_gp * d_loss_gp
             self.reset_grad()
             d_loss.backward()
@@ -268,26 +289,66 @@ class Solver(object):
             loss['D/loss_fake'] = d_loss_fake.item()
             # loss['D/loss_app'] = d_loss_app.item()
             # loss['D/loss_pose'] = d_loss_pose.item()
-            # loss['D/loss_gp'] = d_loss_gp.item()
+            loss['D/loss_gp'] = d_loss_gp.item()
 
             # =================================================================================== #
             #                               3. Train the generator                                #
             # =================================================================================== #
 
-            if (i + 1) % self.n_critic == 0:
+            if (step + 1) % self.n_critic == 0:
                 # Original-to-target domain.
                 x_fake = self.G(b_real, con_feat)
+                # print(x_fake[0,:,200:205,200:205])
                 out_src = self.D(x_fake)
                 g_loss_fake = - torch.mean(out_src)
-                fake_app_feat = self.feat_extract(x_fake)
-                fake_pose_feat = self.pose_extract(x_fake, bbox)
+
+                crop_batch = torch.zeros((x_fake.shape[0], 3, 224, 224))
+                b = bbox.detach().cpu().numpy().astype(int)
+                for i in range(x_fake.shape[0]):
+                    # img = crop(x_fake[i], bbox[i])
+                    x1, x2, y1, y2 = b[i,0], b[i,0]+b[i,2], b[i,1], b[i,1]+b[i,3]
+                    x1 = min(max(x1, 0), 416)
+                    x2 = min(max(x2, 0), 416)
+                    y1 = min(max(y1, 0), 416)
+                    y2 = min(max(y2, 0), 416)
+
+                    img = x_fake[i, :, x1:x2, y1:y2].cpu().data.numpy()
+                    img = img.transpose((1,2,0))
+                    resized_img = np.zeros(shape=(224, 224, 3))
+                    resized_img = cv2.resize(img, (224, 224), interpolation = cv2.INTER_AREA)
+                    crop_batch[i, :, :, :] = torch.from_numpy(resized_img.transpose((2,0,1)))
+
+
+                fake_app_feat = self.feat_extract(crop_batch)
+                fake_pose_feat = self.pose_extract(crop_batch.numpy())
+
+                # #**** debug ****#
+                # fake_images = (x_fake.cpu().data).numpy()
+                # permute = [2, 1, 0]
+                # fake_images = fake_images[:, permute, :, :].transpose((0,2,3,1))
+                # resized_data = np.zeros(shape=(fake_images.shape[0], 224, 224, 3))
+                # for j in range(fake_images.shape[0]):
+                #     resized_data[j,:,:,:] = cv2.resize(fake_images[j,:,:,:], (224, 224), interpolation = cv2.INTER_AREA)
+                # resized_data = np.transpose(resized_data, (0, 3, 1, 2))
+                # resized_tensor = torch.from_numpy(resized_data)
+                # resized_tensor = resized_tensor.to(self.device, dtype=torch.float)
+
+                # fake_app_feat = self.feat_extract(resized_tensor)
+                # fake_pose_feat = self.pose_extract(resized_data, bbox)
+
+                fake_app_feat = fake_app_feat.to(self.device)
+                fake_pose_feat = fake_pose_feat.to(self.device)
+                #**** debug ****#
+
                 # g_loss_cls = self.classification_loss(out_cls, label_trg, self.dataset)
                 g_loss_app = - self.appreance_cos_similarity(fake_app_feat, a_app_feat)  # -similarity
-                g_loss_pose = self.pose_loss(fake_pose_feat, b_pose_feat, mask)                # joints distance
+                # print(fake_pose_feat.size(), b_pose_feat.size(), mask.size())
+                g_loss_pose = self.compute_pose_loss(fake_pose_feat, b_pose_feat, mask)  # joints distance
 
 
                 # Backward and optimize.
                 # g_loss = g_loss_fake + self.lambda_rec * g_loss_rec + self.lambda_app * g_loss_cls
+                # g_loss = g_loss_fake + self.lambda_app * g_loss_app + self.lambda_pose * g_loss_pose
                 g_loss = g_loss_fake + self.lambda_app * g_loss_app + self.lambda_pose * g_loss_pose
                 self.reset_grad()
                 g_loss.backward()
@@ -296,8 +357,8 @@ class Solver(object):
                 # Logging.
                 loss['G/loss_fake'] = g_loss_fake.item()
                 # loss['G/loss_rec'] = g_loss_rec.item()
-                loss['G/loss_app'] = g_loss_app.item()
-                loss['G/loss_pose'] = g_loss_pose.item()
+                loss['G/loss_app'] = g_loss_app.item() * self.lambda_app
+                loss['G/loss_pose'] = g_loss_pose.item() * self.lambda_pose
 
 
             # =================================================================================== #
@@ -305,10 +366,10 @@ class Solver(object):
             # =================================================================================== #
 
             # Print out training information.
-            if (i + 1) % self.log_step == 0:
+            if (step + 1) % self.log_step == 0:
                 et = time.time() - start_time
                 et = str(datetime.timedelta(seconds=et))[:-7]
-                log = "Elapsed [{}], Iteration [{}/{}]".format(et, i + 1, self.num_iters)
+                log = "Elapsed [{}], Iteration [{}/{}]".format(et, step + 1, self.num_iters)
                 for tag, value in loss.items():
                     log += ", {}: {:.4f}".format(tag, value)
                 print(log)
@@ -318,26 +379,46 @@ class Solver(object):
                         self.logger.scalar_summary(tag, value, i + 1)
 
             # Translate fixed images for debugging.
-            if (i + 1) % self.sample_step == 0:
+            if (step + 1) % self.sample_step == 0:
+
                 with torch.no_grad():
-                    a_fake_list = [a_fixed, b_fixed]
-                    a_fixed_feat = self.feat_extract(a_fixed)
-                    a_fake_list.append(self.G(b_fixed, a_fixed_feat))
-                    x_concat = torch.cat(a_fake_list, dim=3)
-                    sample_path = os.path.join(self.sample_dir, '{}-images.jpg'.format(i + 1))
-                    save_image(self.denorm(x_concat.data.cpu()), sample_path, nrow=1, padding=0)
+                    # a fix: [N, 3, 224, 224]
+                    # a_real, b_real, bbox, b_pose_feat, mask
+                    a_resized = torch.zeros(size=(a_real.shape[0], 3 ,416, 416))
+                    for i in range(a_real.shape[0]):
+                        img = a_real[i].cpu().data.numpy()
+                        img = img.transpose((1,2,0))
+                        resized_img = np.zeros(shape=(416, 416, 3))
+                        resized_img = cv2.resize(img, (416, 416), interpolation = cv2.INTER_AREA)
+                        a_resized[i, :, :, :] = torch.from_numpy(resized_img.transpose((2,0,1)))
+
+                    a_resized = a_resized.to(self.device)
+
+                    picture_list = [a_resized, b_real]
+                    a_visual_feat = self.feat_extract(a_real)
+                    # a feature: [N, 20]; bbox: [N,4]
+                    # con_visual_feat = torch.cat([a_visual_feat, bbox/416.0], dim=1) # [N, 24]
+                    con_visual_feat = a_visual_feat
+                    # print(b_real, con_visual_feat)
+                    x_fake = self.G(b_real, con_visual_feat) # [N, 3, 416, 416]
+                    # print(a_fixed.size(), b_fixed.size(), x_fake.size())
+                    picture_list.append(x_fake)
+                    picture_concat = torch.cat(picture_list, dim=0)
+                    # print(picture_concat.size())
+                    sample_path = os.path.join(self.sample_dir, '{}-images.jpg'.format(step + 1))
+                    save_image(self.denorm(picture_concat.data.cpu()), sample_path, nrow=4, padding=0)
                     print('Saved real and fake images into {}...'.format(sample_path))
 
             # Save model checkpoints.
-            if (i + 1) % self.model_save_step == 0:
-                G_path = os.path.join(self.model_save_dir, '{}-G.ckpt'.format(i + 1))
-                D_path = os.path.join(self.model_save_dir, '{}-D.ckpt'.format(i + 1))
+            if (step + 1) % self.model_save_step == 0:
+                G_path = os.path.join(self.model_save_dir, '{}-G.ckpt'.format(step + 1))
+                D_path = os.path.join(self.model_save_dir, '{}-D.ckpt'.format(step + 1))
                 torch.save(self.G.state_dict(), G_path)
                 torch.save(self.D.state_dict(), D_path)
                 print('Saved model checkpoints into {}...'.format(self.model_save_dir))
 
             # Decay learning rates.
-            if (i + 1) % self.lr_update_step == 0 and (i + 1) > (self.num_iters - self.num_iters_decay):
+            if (step + 1) % self.lr_update_step == 0 and (step + 1) > (self.num_iters - self.num_iters_decay):
                 g_lr -= (self.g_lr / float(self.num_iters_decay))
                 d_lr -= (self.d_lr / float(self.num_iters_decay))
                 self.update_lr(g_lr, d_lr)
@@ -375,7 +456,7 @@ class Solver(object):
 if __name__ == "__main__":
     pose_data_root = config.pose_data_root
     fashion_data_root = config.deepfashion_data_root
-    train_loader = get_dataloader(pose_data_root, fashion_data_root, config.batch_size)
+    train_loader = get_dataloader(fashion_data_root, pose_data_root, config.batch_size)
     data_iter = iter(train_loader)
     solve = Solver(train_loader, config)
     solve.train()

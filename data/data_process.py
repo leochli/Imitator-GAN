@@ -16,7 +16,7 @@ device_cf = tf.ConfigProto(device_count={'GPU': 1},
 						   inter_op_parallelism_threads = 2,
 						   intra_op_parallelism_threads = 2,
 						   log_device_placement = False)
-device_cf.gpu_options.per_process_gpu_memory_fraction = 0.8
+device_cf.gpu_options.per_process_gpu_memory_fraction = 0.1
 device_cf.gpu_options.allow_growth = True
 
 def get_yolo_model(path_to_model, obj_threshold=0.6, nms_threshold=0.5):
@@ -88,11 +88,13 @@ def process_deep_fashion(dataset_dir, output_dir):
 	for subdir, dirs, files in os.walk(dataset_dir):
 		for file in files:
 			if(file.endswith('.jpg') or file.endswith('.jpeg')):
+				folder_id = subdir.split('/')[-1]
+				# print(folder_id+'_'+file)
 				img_path = os.path.join(subdir, file)
 				image = cv2.imread(img_path,cv2.IMREAD_COLOR)
 				img_person = detect_with_yolo(image, yolo, file, option='CROP')
-				print("Detect person in image {}!".format(file))
-				save_path = output_dir + 'images/' + 'processed_' + file
+				print("Detect person in image {}!".format(folder_id+'_'+file))
+				save_path = output_dir + 'images/' + 'processed_' + folder_id+'_'+file
 				file_output.write(save_path + '\n')
 				cv2.imwrite(save_path, img_person)
 
@@ -125,12 +127,12 @@ def process_human_pose(dataset_dir, output_dir):
 	data['annotations'] = image_annos
 
 	print("Save to JSON file: ", output_dir+'anno_bbox_pose.json')
-	with open(output_dir+'anno_bbox_pose_full.json', 'w') as outfile:
+	with open(output_dir+'anno_bbox_pose_test.json', 'w') as outfile:
 		json.dump(data, outfile)
 
 if __name__ == '__main__':
 	deep_fashion_dir = "/home/lichenghui/deepfashion/img"
-	deep_fashion_anno_dir = "/home/lichenghui/processed_deep_fashion/"
+	deep_fashion_anno_dir = "/home/lichenghui/processed_deep_fashion_full/"
 	human_pose_dir = '/home/lichenghui/mpii_human_pose/images'
 	human_pose_anno_dir = '/home/lichenghui/mpii_human_pose/annotation/'
 
@@ -141,6 +143,7 @@ if __name__ == '__main__':
 
 	test_dir = '/home/lichenghui/test_mpii/images'
 	test_anno = '/home/lichenghui/test_mpii/annotation/'
-	# process_deep_fashion(deep_fashion_dir, deep_fashion_anno_dir)
-	process_human_pose(human_pose_dir, human_pose_anno_dir)
+	process_deep_fashion(deep_fashion_dir, deep_fashion_anno_dir)
+
+	# process_human_pose(test_dir, test_anno)
 

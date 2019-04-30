@@ -2,3 +2,4 @@
 ./yolo_data
 yolo_data/yolo.h5
 *.jpg
+*.tar

@@ -13,7 +13,7 @@ class trainDataset(Dataset):
         self.fashion_dir = fashion_dir
         self.pose_dir = pose_dir
         fashion_path = os.path.join(fashion_dir, 'annotation', 'image_anno.txt')
-        pose_path = os.path.join(pose_dir, 'annotations', 'anno_bbox_pose_subset.json')
+        pose_path = os.path.join(pose_dir, 'annotation', 'anno_bbox_pose_full.json')
 
         self.fashion_transforms = fashion_transforms
         self.pose_transforms = pose_transforms
@@ -36,7 +36,7 @@ class trainDataset(Dataset):
         fashion_image = self.fashion_transforms(fashion_image)
 
         pose_img_path = self.pose_data[index]['image_path'].split('/')[-1]
-        pose_img_file = os.path.join(self.pose_dir, 'image_subset', pose_img_path)
+        pose_img_file = os.path.join(self.pose_dir, 'images', pose_img_path)
         pose_image = Image.open(pose_img_file).convert('RGB')
         pose_image = self.pose_transforms(pose_image)
 
