@@ -16,7 +16,7 @@ device_cf = tf.ConfigProto(device_count={'GPU': 1},
 						   inter_op_parallelism_threads = 2,
 						   intra_op_parallelism_threads = 2,
 						   log_device_placement = False)
-device_cf.gpu_options.per_process_gpu_memory_fraction = 0.1
+device_cf.gpu_options.per_process_gpu_memory_fraction = 0.2
 device_cf.gpu_options.allow_growth = True
 
 def get_yolo_model(path_to_model, obj_threshold=0.6, nms_threshold=0.5):

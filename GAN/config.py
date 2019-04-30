@@ -7,15 +7,15 @@ d_conv_dim = 64
 g_repeat_num = 4
 d_repeat_num = 4
 lambda_app = 1
-lambda_pose = 0.000001
+lambda_pose = 0.00001
 lambda_rec = 1
 lambda_gp = 1
 
 # Training configurations.
 
 batch_size = 4
-num_iters = 2000
-num_iters_decay = 1000
+num_iters = 20000
+num_iters_decay = 10000
 g_lr = 0.0001
 d_lr = 0.0001
 n_critic = 1
@@ -38,7 +38,7 @@ result_dir = '../test_result'
 log_step = 20
 sample_step = 50
 model_save_step = 2000
-lr_update_step = 500
+lr_update_step = 100
 
 dumped_model = "model_10_final.pth.tar"
 inter_dim = 512

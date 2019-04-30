@@ -62,7 +62,7 @@ def get_dataloader(fashion_dir, pose_dir, batch_size):
     return train_loader
 
 if __name__ == "__main__":
-    train_loader = get_dataloader('../processed_deep_fashion', '../human_pose', 10)
+    train_loader = get_dataloader('../processed_deep_fashion_full', '../human_pose', 10)
     data_iter = iter(train_loader)
     a_real, b_real, bbox, b_pose_feat, mask = next(data_iter)
     print(a_real.shape)

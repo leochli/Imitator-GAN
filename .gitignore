@@ -3,3 +3,5 @@
 yolo_data/yolo.h5
 *.jpg
 *.tar
+./saved_models/
+*.ckpt
