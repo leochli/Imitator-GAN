@@ -14,6 +14,10 @@ from dataloader import *
 from data_process import *
 import config
 
+import torchvision.transforms.functional as F
+from PIL import Image, ImageDraw
+
+
 class Solver(object):
     """Solver for training and testing StarGAN."""
 
@@ -380,11 +384,12 @@ class Solver(object):
 
             # Translate fixed images for debugging.
             if (step + 1) % self.sample_step == 0:
-
+            # if (step + 1) % 1 == 0:  
                 with torch.no_grad():
                     # a fix: [N, 3, 224, 224]
                     # a_real, b_real, bbox, b_pose_feat, mask
                     a_resized = torch.zeros(size=(a_real.shape[0], 3 ,416, 416))
+                    b_drawed = torch.zeros(size=(a_real.shape[0], 3 ,416, 416))
                     for i in range(a_real.shape[0]):
                         img = a_real[i].cpu().data.numpy()
                         img = img.transpose((1,2,0))
@@ -392,9 +397,20 @@ class Solver(object):
                         resized_img = cv2.resize(img, (416, 416), interpolation = cv2.INTER_AREA)
                         a_resized[i, :, :, :] = torch.from_numpy(resized_img.transpose((2,0,1)))
 
+                        trans1 = transforms.ToPILImage()
+                        trans2 = transforms.ToTensor()
+                        b_img = trans1(b_real[i].cpu())
+                        draw = ImageDraw.Draw(b_img)
+                        b = bbox[i].cpu().data.numpy().astype(int)
+                        x, y, w, h = b
+                        x2, y2 = x + w, y + h
+                        draw.rectangle([x, y, x2, y2], outline="green", width=20)
+                        b_drawed[i, :, :, :] = trans2(b_img)
+
+                    b_drawed = b_drawed.to(self.device)
                     a_resized = a_resized.to(self.device)
 
-                    picture_list = [a_resized, b_real]
+                    picture_list = [a_resized, b_drawed]
                     a_visual_feat = self.feat_extract(a_real)
                     # a feature: [N, 20]; bbox: [N,4]
                     # con_visual_feat = torch.cat([a_visual_feat, bbox/416.0], dim=1) # [N, 24]
