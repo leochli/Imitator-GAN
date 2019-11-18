@@ -7,3 +7,6 @@ TODO List:
 2. Data Processing: create script to generate human post/heatpose;
 3. Test PyTorch version of CMU pose esitimator;
 4. GAN: Figure out the design of GAN discriminator
+
+Status:
+
